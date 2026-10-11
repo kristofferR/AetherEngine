@@ -268,6 +268,15 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
         guard !drainedAtEOF else { return [] }
         drainedAtEOF = true
         var results: [UnsafeMutablePointer<AVPacket>] = []
+        // Audio the decoder held back for metadata that never came plays as it is.
+        decoder.finishInput()
+        do {
+            while let block = try decoder.nextBlock() {
+                try renderAndEncode(block, into: &results)
+            }
+        } catch {
+            EngineLog.emit("[SpatialAudioBridge] EOF drain of held blocks failed: \(error)", category: .session)
+        }
         encodePending()
         logLevels(levelMeter.restart())
         let finished = pipeline.finish()

@@ -79,7 +79,9 @@ final class ObjectAudioRenderer {
         rampTotal = rampRemaining
         hasMetadata = Array(repeating: false, count: roles.count)
         // Beds and LFE have gains the moment the renderer exists; objects wait for metadata and are
-        // silent until their first update, rather than guessing at a position.
+        // silent until their first update, rather than guessing at a position. The TrueHD decoder
+        // holds the blocks before that update and gives the first of them its state at frame 0
+        // (`ObjectMetadataHold`), so after a reset that wait costs nothing audible.
         for (index, role) in roles.enumerated() where role != .object {
             staticGains(for: role, state: ObjectAudioElementState(), into: &current[index])
             target[index] = current[index]

@@ -22,6 +22,10 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
     private var rolesSerial: UInt32?
     private var planes: [UnsafePointer<Float>] = []
     private(set) var selfResetCount = 0
+    /// Blocks between a reset and the first metadata, so objects play from the first frame (see
+    /// `ObjectMetadataHold`), and the released block last handed out, whose planes it owns.
+    private let hold = ObjectMetadataHold()
+    private var lent: ObjectMetadataHold.Copy?
 
     init() throws {
         guard let handle = truehd_atmos_decoder_create(TRUEHD_ATMOS_PRESENTATION_HIGHEST) else {
@@ -48,6 +52,19 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
     }
 
     func nextBlock() throws -> ObjectAudioDecodedBlock? {
+        lent = nil
+        while true {
+            if let released = hold.nextReleased() {
+                lent = released
+                return released.block
+            }
+            guard let (block, firstStates) = try pull() else { return nil }
+            if let block = hold.admit(block, firstStates: firstStates) { return block }
+        }
+    }
+
+    /// The library's next block, with every element's state as of its first metadata update.
+    private func pull() throws -> (ObjectAudioDecodedBlock, [ObjectAudioElementState?]?)? {
         var block = TrueHDAtmosBlock()
         let status = truehd_atmos_decoder_pull(handle, &block)
         if status == TRUEHD_ATMOS_NEED_MORE_DATA { return nil }
@@ -70,11 +87,13 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
         for c in 0..<channels { planes.append(UnsafePointer(block.channels[c]!)) }
 
         var updates: [ObjectAudioMetadataUpdate] = []
+        var firstStates: [ObjectAudioElementState?]?
         if block.flags & TRUEHD_ATMOS_BLOCK_METADATA_UPDATED != 0, let metadata = block.metadata {
             let md = metadata.pointee
             let count = min(Int(md.element_count), channels)
             for u in 0..<Int(md.update_count) {
                 let update = md.updates[u]
+                if u == 0 { firstStates = (0..<count).map { Self.state(for: update.elements[$0]) } }
                 var states: [ObjectAudioElementState?] = []
                 states.reserveCapacity(count)
                 for e in 0..<count {
@@ -87,7 +106,7 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
             }
         }
 
-        return ObjectAudioDecodedBlock(
+        return (ObjectAudioDecodedBlock(
             sampleRate: Int(block.sample_rate),
             frameCount: Int(block.frame_count),
             inputFrameOffset: Int64(block.input_frame_offset),
@@ -95,11 +114,17 @@ final class TrueHDObjectAudioDecoder: ObjectAudioDecoding {
             isDiscontinuity: block.flags & TRUEHD_ATMOS_BLOCK_DISCONTINUITY != 0,
             roles: roles,
             planes: planes,
-            updates: updates)
+            updates: updates), firstStates)
     }
 
     func reset() {
         _ = truehd_atmos_decoder_reset(handle)
+        hold.arm()
+        lent = nil
+    }
+
+    func finishInput() {
+        hold.releaseAll()
     }
 
     private func error(_ status: Int32) -> DecoderError {

@@ -23,6 +23,14 @@ the public-API contract.
   request count. TLS validation, the redirect header policy and the body limits are unchanged, and
   sources without the option keep their transport (#732).
 
+### Fixed
+
+- **Objects play from the first frame after a seek in TrueHD Atmos rendered to APAC.** Decoding
+  resumes at the next major sync, and the first object metadata follows up to 32 ms later; until it
+  arrived, every object rendered silent, so after each seek the APAC carried the LFE alone (21 to
+  24 ms on Nature's Fury). The decoder now holds those blocks and releases them with the first
+  metadata's state applied from their first frame (`ObjectMetadataHold`), waiting at most 100 ms.
+
 ## [7.34.1] - 2026-10-11
 
 ### Changed
