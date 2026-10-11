@@ -10,7 +10,9 @@ the public-API contract.
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- **TrueHD Atmos and DTS:X play as Apple spatial audio (`LoadOptions.spatialAudio`, on by default).** The audio bridge decodes these tracks to PCM and re-encodes the bed as E-AC-3 5.1 or FLAC, so their objects never reached the receiver. On the native path the engine now offers every 48 kHz TrueHD and DTS-HD MA track to [SpatialAudioBridge](https://github.com/kristofferR/SpatialAudioBridge) 1.2, which recognises Atmos and DTS:X itself (FFmpeg reports alternate DTS:X presentations as plain DTS-HD MA), renders the objects and heights to 7.1.4 and encodes APAC, and serves the result as an `EXT-X-MEDIA:TYPE=AUDIO` rendition (`apac.m3u8`, `apac.31.03`, `CHANNELS="12"`) beside a video-only variant. A second reader on the source converts 3.2 s segments on demand on a fixed grid, restarting where AVPlayer asks after a seek, and stamps them where the bridged audio would have been muxed. While the session plays on tvOS, `AtmosOutputActivator` loops a silent Dolby Digital Plus Atmos stream in a second player, which is what switches an Apple TV's HDMI output to Atmos. The track is checked at load, so one the library rejects (plain TrueHD, DTS-HD MA without DTS:X, unsupported object metadata) plays through the bridge as before, and a conversion that fails later rebuilds the session on the bridge at the same position. Skipped below OS 26, on visionOS, for live, sequential, held-connection, single-request and disc sources, media-playlist routing and AirPlay. `audioDelivery` stays `.bridged`; `activeAudioDecoder` reads `"TrueHD Atmos → APAC 7.1.4 (Spatial Audio)"`. Measured on a Mac with local TrueHD Atmos and DTS:X files: the check takes 0.3 to 0.8 s, a restarted run delivers its first segment in about 0.3 s, and the APAC audio matches FFmpeg's TrueHD decode at the expected position to within one sample, a restarted run included.
 
 ## [7.33.2] - 2026-10-09
 

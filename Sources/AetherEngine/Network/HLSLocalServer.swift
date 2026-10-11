@@ -119,6 +119,10 @@ protocol HLSSegmentProvider: AnyObject {
     func iFrameInitSegment() -> Data?
     func iFrameSegment(at index: Int) -> Data?
 
+    /// The APAC rendition that carries the session's audio when it is TrueHD Atmos or DTS:X, nil when
+    /// the audio is muxed into the variant. Answers `apac.m3u8`, `apac_init.mp4` and `apac{N}.m4s`.
+    var spatialAudioSource: SpatialAudioSegmentSource? { get }
+
     /// Atomic snapshot at the top of each playlist build. discontinuitySequence = EXT-X-DISCONTINUITY-tagged segments that slid out of the window (RFC 8216 §6.2.2 requires incrementing it; omission slips AVPlayer's discontinuity tracking one window per boundary). firstVisible in the same snapshot: a separate lock acquisition let a concurrent slide produce MEDIA-SEQUENCE newer than the count.
     func notePlaylistBuild() -> (visibleCount: Int, firstVisible: Int, refreshCounter: Int, endlistAdded: Bool, discontinuitySequence: Int)
 
@@ -191,6 +195,7 @@ extension HLSSegmentProvider {
     var iFrameRenditionServed: Bool { false }
     func iFrameInitSegment() -> Data? { nil }
     func iFrameSegment(at index: Int) -> Data? { nil }
+    var spatialAudioSource: SpatialAudioSegmentSource? { nil }
     var liveTargetSegmentDuration: Double? { nil }
     var liveRejoinStart: (segmentIndex: Int, secondsIntoSegment: Double)? { nil }
     func noteServedLiveRejoinPlacement(timeOffset: Double, firstVisible: Int) {}
@@ -1169,6 +1174,26 @@ final class HLSLocalServer: @unchecked Sendable {
                            data: Data(vtt.utf8),
                            contentType: "text/vtt")
 
+        case "/apac.m3u8":
+            guard let source = provider?.spatialAudioSource else {
+                return send404(fd: fd, path: normalizedPath, reason: "no spatial audio rendition")
+            }
+            return send200(fd: fd, path: normalizedPath, data: Data(source.mediaPlaylist.utf8),
+                           contentType: "application/vnd.apple.mpegurl")
+
+        case "/apac_init.mp4":
+            guard let data = provider?.spatialAudioSource?.initSegment(), !data.isEmpty else {
+                return send503(fd: fd, path: normalizedPath, reason: "spatial audio init unavailable")
+            }
+            return send200(fd: fd, path: normalizedPath, data: data, contentType: "audio/mp4")
+
+        case let p where p.hasPrefix("/apac") && p.hasSuffix(".m4s"):
+            guard let source = provider?.spatialAudioSource,
+                  let index = Int(p.dropFirst("/apac".count).dropLast(".m4s".count)), index >= 0 else {
+                return send404(fd: fd, path: normalizedPath, reason: "no spatial audio segment for \(normalizedPath)")
+            }
+            return sendSpatialAudioSegment(fd: fd, path: normalizedPath, index: index, source: source)
+
         case "/iframe.m3u8":
             guard let prov = provider, prov.iFrameRenditionServed else {
                 return send404(fd: fd, path: normalizedPath, reason: "no I-frame rendition")
@@ -1312,6 +1337,30 @@ final class HLSLocalServer: @unchecked Sendable {
             }
             return send404(fd: fd, path: normalizedPath, reason: "unknown path")
         }
+    }
+
+    /// An APAC segment still converting after the slow-serve threshold gets its headers early, as a
+    /// video segment does (#93 round 3): conversion after a seek can outlast AVPlayer's 3.5 s wait for
+    /// a first byte. A miss after that ends the connection, so AVPlayer retries instead of taking an
+    /// empty segment.
+    private func sendSpatialAudioSegment(fd: Int32, path: String, index: Int,
+                                         source: SpatialAudioSegmentSource) -> Bool {
+        let early = EarlyHeaderState()
+        let signal = SlowServeSignal(thresholdSeconds: 2.0) { [weak self] in
+            guard let self, early.markSentOnce() else { return }
+            _ = self.writeAll(fd: fd, data: Self.chunkedResponseHeader(contentType: "audio/mp4"),
+                              path: "\(path) [early header]")
+        }
+        let data = source.segment(at: index)
+        signal.complete()
+        if early.wasSent {
+            guard let data, !data.isEmpty else { return false }
+            return sendChunkedBody(fd: fd, path: path, data: data)
+        }
+        guard let data, !data.isEmpty else {
+            return send503(fd: fd, path: path, reason: "spatial audio segment \(index) unavailable")
+        }
+        return send200(fd: fd, path: path, data: data, contentType: "audio/mp4")
     }
 
     // MARK: - HTTP framing
@@ -1758,6 +1807,10 @@ final class HLSLocalServer: @unchecked Sendable {
             // `CHANNELS="16/JOC"`; a non-JOC track gets its plain bed count.
             if let channels = provider.masterAudioChannels {
                 audioAttrs.append("CHANNELS=\"\(channels)\"")
+            }
+            // An APAC rendition is the one audio rendition that is not inside the variant.
+            if provider.spatialAudioSource != nil {
+                audioAttrs.append("URI=\"apac.m3u8\"")
             }
             lines.append("#EXT-X-MEDIA:\(audioAttrs.joined(separator: ","))")
         }

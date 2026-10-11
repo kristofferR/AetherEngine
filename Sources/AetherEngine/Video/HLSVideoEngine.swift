@@ -252,6 +252,22 @@ public final class HLSVideoEngine: @unchecked Sendable {
     private(set) var iFrameRenditionVerdict: IFrameRenditionEligibility.Verdict = .absent(.notRequested)
     private var iFrameRendition: IFrameRendition?
 
+    /// The APAC rendition that carries the audio when it is TrueHD Atmos or DTS:X
+    /// (`SpatialAudioRendition`). The variant is then video-only. Written once, in `start()`.
+    private(set) var spatialAudio: SpatialAudioSegmentSource?
+    var servesSpatialAudio: Bool { spatialAudio != nil }
+    /// Set before `start()`. False keeps every track on the bridge: the host's option, or a route
+    /// APAC cannot take, such as AirPlay.
+    var spatialAudioAllowed = true
+    /// Streams whose rendition failed earlier in this session; the rebuild keeps them on the bridge.
+    var spatialAudioRefusedStreamIndices: Set<Int32> = []
+    /// A second reader for a custom-IO source, which the session cannot reopen by URL. Called only
+    /// when the rendition would be served; the rendition owns and closes what it returns.
+    var makeSpatialAudioCustomReader: (() -> (reader: IOReader, formatHint: String?)?)?
+    /// The rendition stopped converting for good (stream index, reason): the session has no audio
+    /// left to serve, and the host rebuilds it on the bridge.
+    var onSpatialAudioFailed: (@Sendable (Int32, String) -> Void)?
+
     /// Native subtitle rendition marked DEFAULT=YES in the master (Sodalite#32). Set before `start()`; the
     /// provider advertises this ordinal as the group default so a host-selected legible track renders.
     var nativeSubtitleDefaultOrdinal: Int = 0
@@ -1969,30 +1985,54 @@ public final class HLSVideoEngine: @unchecked Sendable {
             }
         }
 
-        // 6b. Run the stream-copy / FLAC-bridge / video-only cascade.
+        // 6b. TrueHD Atmos and DTS:X play as an APAC rendition beside a video-only variant when the
+        // session can serve one. Every other track, and one the library rejects, runs the
+        // stream-copy / FLAC-bridge / video-only cascade.
+        let spatialAudio = audioStreamIndex >= 0 ? audioDem.stream(at: audioStreamIndex).flatMap {
+            makeSpatialAudio(
+                streamIndex: audioStreamIndex, stream: $0, demuxer: dem, plan: plan,
+                startIndex: initialProducerBaseIndex, videoTimeBaseSeconds: sourceVideoTbSeconds,
+                masterRoutable: AetherEngine.forceMasterPlaylistForTesting || Self.resolveUseMasterPlaylist(
+                    videoRange: videoRange, effectiveDvMode: effectiveDvMode,
+                    panelIsInHDRMode: panelIsInHDRMode, displaySupportsHDR: displaySupportsHDR,
+                    hasNativeSubs: false, builtInPanelEngagesOnDemand: Self.builtInPanelEngagesOnDemand,
+                    frameRateKnown: frameRate != nil, hasAudioRendition: true))
+        } : nil
         let prod: HLSSegmentProducer
-        prod = try buildProducerWithAudioCascade(
-            preferBridge: bridgePreferred,
-            streamCopyAudio: streamCopyAudio,
-            sourceAudioStreamIndex: audioStreamIndex,
-            sourceAudioStream: audioStreamIndex >= 0 ? audioDem.stream(at: audioStreamIndex) : nil,
-            sourceCarriesAudio: audioDem.firstAudioStreamIndexByType >= 0,
-            audioHLSCodecs: &audioHLSCodecs,
-            audioLanguage: audioLanguage
-        )
+        if let spatialAudio {
+            // Owned from here, so `stop()` shuts it down whatever happens to the rest of `start()`.
+            self.spatialAudio = spatialAudio
+            self.savedAudioConfig = nil
+            self.audioBridge = nil
+            prod = try makeProducer(baseIndex: initialProducerBaseIndex)
+            audioHLSCodecs = spatialAudio.codecs
+            self.audioPipelineDescription = spatialAudio.pipelineDescription
+            self.audioDelivery = .bridged
+        } else {
+            prod = try buildProducerWithAudioCascade(
+                preferBridge: bridgePreferred,
+                streamCopyAudio: streamCopyAudio,
+                sourceAudioStreamIndex: audioStreamIndex,
+                sourceAudioStream: audioStreamIndex >= 0 ? audioDem.stream(at: audioStreamIndex) : nil,
+                sourceCarriesAudio: audioDem.firstAudioStreamIndexByType >= 0,
+                audioHLSCodecs: &audioHLSCodecs,
+                audioLanguage: audioLanguage
+            )
+        }
         self.producer = prod
-        self.activeAudioSourceStreamIndex = savedAudioConfig != nil ? audioStreamIndex : -1
+        let audioReachedVariant = savedAudioConfig != nil || spatialAudio != nil
+        self.activeAudioSourceStreamIndex = audioReachedVariant ? audioStreamIndex : -1
         // AE#458: only when the audio actually reached the variant. A cascade that fell through to
         // video-only must not advertise an audio rendition that is not in the segments, and must not
         // force the master for one either.
-        let servedAudioLanguage = savedAudioConfig != nil ? audioLanguage : nil
+        let servedAudioLanguage = audioReachedVariant ? audioLanguage : nil
         // Same gate, for the rendition's CHANNELS: read the count off the config the MUXER got, so a
         // bridged track reports the encoder's layout rather than the source's. `audioIsAtmosStreamCopy`
         // is latched from the source probe (profile 30 = JOC) before the cascade runs, so it is still
         // true on a source whose stream-copy was rejected and bridged to FLAC; objects do not survive
         // that, hence the `.streamCopy` conjunct. Without it a downgraded session would advertise
         // `CHANNELS="16/JOC"` over a FLAC bed, which is worse than saying nothing.
-        let servedAudioChannels: Int? = savedAudioConfig.map {
+        let servedAudioChannels: Int? = spatialAudio?.channelCount ?? savedAudioConfig.map {
             Int($0.codecpar.pointee.ch_layout.nb_channels)
         }
         let servedAudioIsAtmosStreamCopy =
@@ -2084,6 +2124,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
             segmentServedHandler: segmentServedHandler
         )
         self.provider = prov
+        prov.setSpatialAudioSource(spatialAudio)
         // AE#520 round 2: the close reads it on the playlist-build thread, so it is a closure over a
         // mirror rather than a read of the item.
         prov.consumerBufferedSecondsProvider = consumerBufferedSecondsProvider
@@ -2169,7 +2210,7 @@ public final class HLSVideoEngine: @unchecked Sendable {
             builtInPanelEngagesOnDemand: Self.builtInPanelEngagesOnDemand,
             frameRateKnown: frameRate != nil,
             videoCodecNeedsMasterSignaling: videoCodecNeedsMasterSignaling,
-            hasAudioRendition: servedAudioLanguage != nil || servedAudioIsAtmosStreamCopy,
+            hasAudioRendition: servedAudioLanguage != nil || servedAudioIsAtmosStreamCopy || spatialAudio != nil,
             hasIFrameRendition: iFrameCandidate == .served)
         let resolvedURL: URL? = useMasterPlaylist
             ? srv.playlistURL
@@ -2684,6 +2725,9 @@ public final class HLSVideoEngine: @unchecked Sendable {
         // Wake LL-HLS blocking-reload waiters; without this they sleep out their full 18-30 s timeout.
         prov?.cancelWaiters()
         prov?.setIFrameSource(nil)
+        prov?.setSpatialAudioSource(nil)
+        // Not cleared: the pump reads it at every gate open, and shutting it down is idempotent.
+        spatialAudio?.shutdown()
 
         // markClosed unblocks a live pump parked in the AVIO reconnect loop (exits on closed flag,
         // not the producer cancel flag). Without this, waitForFinish blocks ~3 s while reconnects
@@ -3044,6 +3088,9 @@ public final class HLSVideoEngine: @unchecked Sendable {
                 ? 0 : Double(normalizationShiftPts) * sourceVideoTbSeconds,
             isRecut: isRecut)
         epochAxisByIndex.record(axis, at: index)
+        // The APAC rendition stamps its audio with the shift the mux applies to every packet, which is
+        // where the bridged audio would sit in these segments, AE#464's delay included.
+        spatialAudio?.setSourceOffset(axis.carried - audioDelaySeconds)
         let placementAlreadyHappened = lastPlacedIndex == index
         anchorShiftLock.unlock()
         gateOpenCondition.lock()

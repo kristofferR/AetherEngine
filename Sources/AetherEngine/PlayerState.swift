@@ -684,6 +684,20 @@ public struct LoadOptions: Sendable, Equatable {
     /// Default `false` (#214 follow-up).
     public var confirmAtmos: Bool = false
 
+    /// Play a TrueHD Atmos or DTS:X track as Apple's spatial audio (APAC) on the native path, so its
+    /// objects reach AVPlayer instead of the `audioBridgeMode` bed. Every 48 kHz TrueHD and DTS-HD MA
+    /// track is offered to SpatialAudioBridge, which renders the objects to 7.1.4 and encodes them, on
+    /// demand, into an audio rendition beside the video; on tvOS a silent Dolby Atmos stream keeps the
+    /// HDMI output in Atmos while it plays. Needs tvOS, iOS or macOS 26 and a second reader on the
+    /// source; it is skipped, with one log line naming the reason, for live, sequential,
+    /// held-connection, single-request and disc sources, media-playlist routing and AirPlay. A track
+    /// the library rejects (plain TrueHD, DTS-HD MA without DTS:X, unsupported object metadata) plays
+    /// through the bridge, and a conversion that fails mid-session rebuilds the session on it at the
+    /// same position.
+    /// `audioDelivery` reads `.bridged` either way. A tuning field: correctable through
+    /// `reloadAtCurrentPosition(applying:)`. Default `true`.
+    public var spatialAudio: Bool = true
+
     /// Preferred subtitle languages (ISO 639-1/2) used ONLY to choose which native WebVTT rendition is marked DEFAULT=YES in the master, so a host-selected legible track renders (AVKit hides a non-default legible selection as mute-only). Read back as `nativeSubtitleDefaultOrdinal`. Unlike `preferredSubtitleLanguages` this does NOT auto-activate the host-overlay subtitle path, so it won't double up with the native render. Default empty (Sodalite#32).
     public var nativeSubtitlePreferredLanguages: [String] = []
 
@@ -939,6 +953,7 @@ public struct LoadOptions: Sendable, Equatable {
         eagerNativeSubtitleReaders: Bool = false,
         serveIFramePlaylist: Bool = false,
         confirmAtmos: Bool = false,
+        spatialAudio: Bool = true,
         nativeSubtitlePreferredLanguages: [String] = [],
         sequentialOrigin: Bool = false,
         maxConcurrentSourceRequests: Int? = nil,
@@ -988,6 +1003,7 @@ public struct LoadOptions: Sendable, Equatable {
         self.eagerNativeSubtitleReaders = eagerNativeSubtitleReaders
         self.serveIFramePlaylist = serveIFramePlaylist
         self.confirmAtmos = confirmAtmos
+        self.spatialAudio = spatialAudio
         self.nativeSubtitlePreferredLanguages = nativeSubtitlePreferredLanguages
         self.sequentialOrigin = sequentialOrigin
         self.maxConcurrentSourceRequests = maxConcurrentSourceRequests

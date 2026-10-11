@@ -2549,6 +2549,11 @@ public final class AetherEngine: ObservableObject {
     /// not a slot (audit FEA-103): a channel with two undecodable tracks would otherwise re-hang on the
     /// second one, after the viewer's pick, with nothing surfaced.
     var undecodableLiveAudioStreamIndices: Set<Int32> = []
+    /// Streams whose APAC rendition failed in this session: its rebuilds keep them on the audio bridge,
+    /// and a host load starts clean, like `undecodableLiveAudioStreamIndices`.
+    var spatialAudioRefusedStreamIndices: Set<Int32> = []
+    /// The `AtmosOutputActivator` while a session serves APAC. Typed loosely because the class needs OS 26.
+    var atmosOutputActivator: AnyObject?
     /// #65 final rung, storm shape: on a frozen live playlist each stage-2 reload replays the tail,
     /// re-stalls within seconds, and the fresh stall SUPERSEDES the ladder task before its
     /// post-reload rung can run, so the reload cycle alone would loop forever. This gate persists
@@ -2729,6 +2734,8 @@ public final class AetherEngine: ObservableObject {
             publishError(PlaybackErrorInfo(kind: .masterPlaylistRejected, message: rejection.message, underlyingDomain: rejection.domain, underlyingCode: rejection.code))
             return
         }
+        if abandonSpatialAudioInsteadOfMediaFallback(
+            session, reason: "AVPlayer rejected the master (code=\(rejection.code))") { return }
         masterFallbackUsed = true
         // AE#459: the display answered. Display-rejection codes only, never the -1002 parse failure.
         // AE#535: and only while the display is eligible for HDR, or the answer is about the window.
@@ -2985,6 +2992,14 @@ public final class AetherEngine: ObservableObject {
                             category: .session)
                         return
                     }
+                }
+                // The media playlist has no audio while the APAC rendition carries it. The rebuild ends
+                // this generation, and the load follows it (AE#629).
+                if session.servesSpatialAudio, session.activeAudioSourceStreamIndex >= 0 {
+                    await abandonSpatialAudio(streamIndex: session.activeAudioSourceStreamIndex,
+                                              reason: "the master never produced tracks")
+                    try checkLoadCurrent(gen)
+                    return
                 }
                 guard let mediaURL = session.mediaPlaylistURL else {
                     throw StartupGateFailure(message: startupGateFailureMessage(host))
@@ -4196,6 +4211,8 @@ public final class AetherEngine: ObservableObject {
         softwarePathEscalationBudget = SoftwarePathEscalation.Budget()
         undecodableLiveAudioStreamIndices = Self.undecodableAudioStreamIndicesAcrossLoad(
             undecodableLiveAudioStreamIndices, sessionPreservingReload: sessionPreservingReloadInFlight)
+        spatialAudioRefusedStreamIndices = Self.undecodableAudioStreamIndicesAcrossLoad(
+            spatialAudioRefusedStreamIndices, sessionPreservingReload: sessionPreservingReloadInFlight)
         masterFallbackUsed = false
         nativeSubtitleReanchorTask?.cancel()
         nativeSubtitleReanchorTask = nil
@@ -6707,6 +6724,9 @@ public final class AetherEngine: ObservableObject {
         // never a single segment, while a merely paused session has long since fetched its init segment.
         let advanced = currentTime - baseline
         guard advanced < 0.5, !session.hasServedMediaSegment else { return }
+        if abandonSpatialAudioInsteadOfMediaFallback(session, reason: "the AirPlay receiver refused the master") {
+            return
+        }
 
         let receiverUID = Self.currentAirPlayReceiverUID()
         if let receiverUID, session.servedSourceIsHDR {
@@ -7332,6 +7352,8 @@ public final class AetherEngine: ObservableObject {
         // AE#560: a recording never outlives its session. This covers stop(), a new load() and
         // every reload, all of which pass through here before the demuxer goes away.
         endRecordingIfRunning(reason: .sessionEnded)
+        // The silent Atmos stream plays only beside a session that serves APAC.
+        detachAtmosOutputActivator()
         // Bump generation to invalidate in-flight load() checkpoints.
         loadGeneration &+= 1
         scrubPreviewSourceGeneration = UUID()

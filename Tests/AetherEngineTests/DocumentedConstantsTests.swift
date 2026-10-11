@@ -229,6 +229,23 @@ final class DocumentedConstantsTests: XCTestCase {
         assertDocumented(#"`CHANNELS="16/JOC"`"#, docs)
     }
 
+    // MARK: - The spatial audio rendition
+
+    /// docs/formats.md gives the APAC segment length and how many transport failures in a row
+    /// send a session back to the bridge.
+    func testSpatialAudioRenditionNumbersMatchDocumentation() throws {
+        #if canImport(SpatialAudioBridge)
+        guard #available(tvOS 26, iOS 26, macOS 26, *) else { throw XCTSkip("APAC needs OS 26") }
+        let docs = try documentation()
+        XCTAssertEqual(SpatialAudioRendition.segmentFrames, 153_600, "3.2 s at 48 kHz")
+        XCTAssertEqual(SpatialAudioRendition.maxConsecutiveFailures, 3)
+        assertDocumented("Its segments last exactly 3.2 s", docs)
+        assertDocumented("three times in a row", docs)
+        #else
+        throw XCTSkip("SpatialAudioBridge is not linked on this platform")
+        #endif
+    }
+
     // MARK: - External subtitle ids
 
     /// A host tells its own tracks from the engine's by this base, and docs/api.md prints the number.

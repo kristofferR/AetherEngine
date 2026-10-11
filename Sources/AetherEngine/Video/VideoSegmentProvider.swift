@@ -722,6 +722,8 @@ final class VideoSegmentProvider: HLSSegmentProvider, @unchecked Sendable {
     private var segments: [HLSVideoEngine.Segment]
     private let iFrameSourceLock = NSLock()
     private var _iFrameSource: IFrameSegmentSource?
+    private let spatialAudioSourceLock = NSLock()
+    private var _spatialAudioSource: SpatialAudioSegmentSource?
     private let isLive: Bool
     /// `LoadOptions.progressiveSegmentDelivery`, read for VOD only (see `fetchesProgressively`).
     private let servesSegmentsProgressively: Bool
@@ -2925,6 +2927,19 @@ final class VideoSegmentProvider: HLSSegmentProvider, @unchecked Sendable {
     func iFrameInitSegment() -> Data? { iFrameSource?.initSegment() }
     func iFrameSegment(at index: Int) -> Data? { iFrameSource?.fragment(at: index) }
 
+    /// Set by the session before the playback URL leaves `start()` when the audio is served as an
+    /// APAC rendition rather than muxed into the variant; cleared when the session stops.
+    func setSpatialAudioSource(_ source: SpatialAudioSegmentSource?) {
+        spatialAudioSourceLock.lock()
+        _spatialAudioSource = source
+        spatialAudioSourceLock.unlock()
+    }
+
+    var spatialAudioSource: SpatialAudioSegmentSource? {
+        spatialAudioSourceLock.lock(); defer { spatialAudioSourceLock.unlock() }
+        return _spatialAudioSource
+    }
+
     var masterCodecs: String? { codecsString }
     var masterSupplementalCodecs: String? { supplementalCodecsString }
     var masterResolution: (width: Int, height: Int)? {
@@ -2950,15 +2965,18 @@ final class VideoSegmentProvider: HLSSegmentProvider, @unchecked Sendable {
     /// the localized language name is what the subtitle renditions already use.
     /// AE#726: an untagged track gets no rendition, except a stream-copied E-AC-3 JOC one. Its CHANNELS is
     /// the only place the master can say "object audio", and without the tag AVFoundation renders the bed.
+    /// An APAC rendition always gets one: its segments are the only audio the session has.
     var masterAudioRendition: (language: String?, name: String)? {
         if let audioLanguage {
             let name = Locale.current.localizedString(forIdentifier: audioLanguage) ?? audioLanguage
             return (language: audioLanguage, name: name)
         }
+        if spatialAudioSource != nil { return (language: nil, name: Self.untaggedSpatialAudioRenditionName) }
         return audioIsAtmosStreamCopy ? (language: nil, name: Self.untaggedAtmosRenditionName) : nil
     }
 
     static let untaggedAtmosRenditionName = "Dolby Atmos"
+    static let untaggedSpatialAudioRenditionName = "Spatial Audio"
 
     /// Apple HLS Authoring Spec 2.13 ("CHANNELS ... MUST be present") plus Dolby's DD+ Online
     /// Delivery Kit: the value is the count of decodable objects, a slash, then `JOC`. 16 is the
@@ -2969,6 +2987,7 @@ final class VideoSegmentProvider: HLSSegmentProvider, @unchecked Sendable {
     /// required and equally absent before this.
     var masterAudioChannels: String? {
         guard masterAudioRendition != nil else { return nil }   // no rendition tag, nothing to attribute
+        if let spatial = spatialAudioSource { return String(spatial.channelCount) }
         if audioIsAtmosStreamCopy { return Self.atmosChannelsAttribute }
         guard let n = audioChannelCount, n > 0 else { return nil }
         return String(n)

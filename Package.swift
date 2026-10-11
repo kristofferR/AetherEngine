@@ -51,6 +51,10 @@ let package = Package(
         // worked example: 1.1.0 shipped a tvOS floor raise as a minor, SwiftPM
         // floated every `from: "1.0.x"` consumer onto it and then failed on the
         // floor instead of backing off, so all of 5.x stopped resolving.
+        // TrueHD Atmos and DTS:X to APAC, so AVPlayer plays their objects through Apple's spatial audio
+        // path instead of a bridged bed. Its core has arm64 slices for Apple TV, iPhone, iPad and Mac
+        // only, hence the platform condition on the target dependencies below.
+        .package(url: "https://github.com/kristofferR/SpatialAudioBridge", .upToNextMinor(from: "1.2.0")),
         .package(url: "https://github.com/superuser404notfound/LibDovi", .upToNextMinor(from: "2.1.0")),  // 2.1.0: dolby_vision 3.4.0, header additive only (two new CMv4.0 metadata entry points, nothing removed); 2.0.0: visionOS (xros) device + simulator slices, declared tvOS floor corrected to 17.0 (was published as 1.1.0, withdrawn: a floor raise is breaking and broke every 5.x pin that floated onto it); 1.0.2: iOS slices + x86_64 (Intel Macs)
     ],
     targets: [
@@ -59,6 +63,10 @@ let package = Package(
             dependencies: [
                 .product(name: "AetherFFmpegBuild", package: "FFmpegBuild"),
                 .product(name: "Dovi", package: "LibDovi"),
+                .product(name: "SpatialAudioBridge", package: "SpatialAudioBridge",
+                         condition: .when(platforms: [.tvOS, .iOS, .macOS])),
+                .product(name: "SpatialAudioPlayback", package: "SpatialAudioBridge",
+                         condition: .when(platforms: [.tvOS, .iOS, .macOS])),
             ],
             linkerSettings: [
                 .linkedFramework("AVFoundation"),

@@ -129,10 +129,15 @@ struct DemuxerOpenProfile: Sendable {
     /// cannot say which reader opened it).
     static let iFrameSideDemuxer = stillExtraction.withReaderLabel("iframe")
 
-    /// Readers that fetch single keyframes and publish no timestamp axis, so the #409 repair's
-    /// sample window would be packets read for nothing.
+    /// The spatial audio rendition's reader. It seeks wherever AVPlayer asks for audio and reads on
+    /// from there, like a restart reopen: a bounded probe that resolves the stream table, then the
+    /// playback reader's tuning.
+    static let spatialAudioSideDemuxer = restartReopen.withReaderLabel("apac")
+
+    /// Readers that publish no video timestamp axis (single keyframes, or no video at all), so the
+    /// #409 repair's sample window would be packets read for nothing.
     static let labelsWithoutCompositionRepair: Set<String> = [
-        stillExtraction.readerLabel, iFrameSideDemuxer.readerLabel,
+        stillExtraction.readerLabel, iFrameSideDemuxer.readerLabel, spatialAudioSideDemuxer.readerLabel,
     ]
 
     /// A copy of `self` with only the open-time probe budget overridden (#68).

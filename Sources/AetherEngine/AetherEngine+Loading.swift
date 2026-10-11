@@ -882,6 +882,16 @@ extension AetherEngine {
                 session.customIFrameReader = (reader: clone, formatHint: customFormatHint)
             }
         }
+        // TrueHD Atmos and DTS:X as APAC: set before start(), which decides whether the session serves
+        // the rendition. An AirPlay receiver is handed the media playlist, which cannot carry it.
+        session.spatialAudioAllowed = loadedOptions.spatialAudio && !airPlayActive
+        session.spatialAudioRefusedStreamIndices = spatialAudioRefusedStreamIndices
+        if isCustomSource, let customReader {
+            let formatHint = customFormatHint
+            session.makeSpatialAudioCustomReader = {
+                customReader.makeIndependentReader().map { (reader: $0, formatHint: formatHint) }
+            }
+        }
         // #260: an observer installed before load has to reach this session's producers too.
         session.setNativeVideoFrameTimeObserver(nativeVideoFrameTimeObserver)
         // Audit Vcore-101: every hop below is dropped once this session has ended (`hop(for:)`).
@@ -1101,6 +1111,14 @@ extension AetherEngine {
             Task { @MainActor in
                 guard let self, let session, self.nativeVideoSession === session else { return }
                 await self.dropUndecodableLiveAudio(streamIndex: streamIndex, bridgeSummary: summary)
+            }
+        }
+        // The APAC rendition stopped converting, so the session has no audio left to serve: rebuilt on
+        // the bridge at the same position.
+        session.onSpatialAudioFailed = { [weak self, weak session] streamIndex, reason in
+            Task { @MainActor in
+                guard let self, let session, self.nativeVideoSession === session else { return }
+                await self.abandonSpatialAudio(streamIndex: streamIndex, reason: reason)
             }
         }
         // #126: zero-progress VOD pump death (readError before any packet/segment), and #169:
@@ -1349,6 +1367,7 @@ extension AetherEngine {
         }
         applyDesiredVolume(to: host)
         applyDesiredRate(to: host)
+        attachAtmosOutputActivator(to: host.avPlayer, session: session)
         // Publish before wiring mirrors so subscribers see the AVPlayer before the first time update. Only emit on change: re-publishing the same instance retriggers the AVKit re-registration this reuse path avoids.
         if currentAVPlayer !== host.avPlayer {
             self.currentAVPlayer = host.avPlayer
