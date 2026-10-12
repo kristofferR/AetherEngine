@@ -1,5 +1,5 @@
 {
-  "originHash" : "dcc3206919d3f09f8601ea23da7fcbab1fba7f272fb7338585a785edbb1b6fee",
+  "originHash" : "de62848d968c304273f36ec04f2490a38174ad2635720bff3bc9e2f603d54d6e",
   "pins" : [
     {
       "identity" : "ffmpegbuild",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "0d7cce1d6836a30d13a3a2326e50a153af53f014",
         "version" : "2.1.0"
+      }
+    },
+    {
+      "identity" : "libdtsx",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kristofferR/LibDTSX",
+      "state" : {
+        "revision" : "d459e44e634b5b98884959017141309b381650dd",
+        "version" : "1.0.0"
       }
     },
     {

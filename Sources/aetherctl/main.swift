@@ -995,7 +995,7 @@ if ["probe", "serve", "validate", "swdecode", "extract", "audio", "customio"].co
     // be read straight off the segments (ffprobe the audio and video first-packet PTS) instead of
     // being judged by ear.
     let serveAudioDelayMs = takeIntFlag("--audio-delay", from: &rest) ?? 0
-    // #731: TrueHD Atmos rendered into a speaker bed and served as APAC (LoadOptions.objectAudioRendering).
+    // #731: TrueHD Atmos or DTS:X rendered into a speaker bed and served as APAC (LoadOptions.objectAudioRendering).
     let atmosBedFlag = takeStringFlag("--atmos-bed", from: &rest)
     let serveObjectAudioRendering: ObjectAudioRendering
     if let atmosBedFlag {

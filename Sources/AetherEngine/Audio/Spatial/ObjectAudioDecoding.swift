@@ -21,7 +21,7 @@ struct ObjectAudioDecodedBlock {
     var updates: [ObjectAudioMetadataUpdate]
 }
 
-/// A decoder that turns an object-audio bitstream (TrueHD with Atmos) into signals plus the
+/// A decoder that turns an object-audio bitstream (TrueHD with Atmos, DTS:X) into signals plus the
 /// metadata that positions them. Kept separate from the bridge so the bridge's timeline, renderer
 /// and encoder handling can be exercised with a synthetic decoder.
 protocol ObjectAudioDecoding: AnyObject {
@@ -29,7 +29,7 @@ protocol ObjectAudioDecoding: AnyObject {
     func push(_ bytes: UnsafeRawBufferPointer) throws
     /// The next complete block, or nil when more input is needed.
     func nextBlock() throws -> ObjectAudioDecodedBlock?
-    /// Drop all state; decoding resumes at the next major sync.
+    /// Drop all state; decoding resumes at the next major sync (TrueHD) or frame (DTS:X).
     func reset()
     /// How often the decoder has reset ITSELF after an internal failure. Its input offsets count from
     /// zero again afterwards, so the caller has to re-anchor its timeline.

@@ -4675,9 +4675,11 @@ public final class AetherEngine: ObservableObject {
             tracks: probedAudioTracks,
             override: audioSourceStreamIndex,
             preferredLanguages: options.preferredAudioLanguages,
-            // Only where the spatial bridge can run: the loopback route of a VOD video session. Live,
-            // audio-only and the software path would decode TrueHD for its 7.1 bed and no heights.
-            prefersTrueHDAtmos: options.objectAudioRendering != .off && !options.isLive && !options.audioOnly
+            // Only where the spatial bridge can run: the loopback route of a VOD video session on an OS
+            // with the APAC encoder. Live, audio-only, the software path and older systems would decode
+            // TrueHD or DTS for its 7.1 bed and no heights, so the default track keeps its place there.
+            prefersObjectAudio: options.objectAudioRendering != .off && ObjectAudioRendering.isAvailable
+                && !options.isLive && !options.audioOnly
                 && !VideoRoutingPolicy.requiresSoftwarePath(
                     codecID: detectedCodecID, fieldOrder: detectedFieldOrder,
                     av1Available: VTCapabilityProbe.av1Available),

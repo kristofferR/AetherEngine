@@ -155,6 +155,23 @@ struct SpatialAudioBridgeTests {
         #expect(HLSVideoEngine.spatialRenderingLayout(rendering: .off, codecID: AV_CODEC_ID_TRUEHD, profile: 30, sampleRate: 48_000) == nil)
     }
 
+    @Test("every 48 kHz DTS-HD MA track is a DTS:X candidate, whatever FFmpeg's label; lossy DTS is not")
+    func dtsEligibility() {
+        let on = ObjectAudioRendering.apac(.l714)
+        // FFmpeg names only two of DTS:X's markers, so a plain DTS-HD MA label can still be DTS:X;
+        // LibDTSX decides on the track's first frames.
+        for profile in [AV_PROFILE_DTS_HD_MA, AV_PROFILE_DTS_HD_MA_X, AV_PROFILE_DTS_HD_MA_X_IMAX] {
+            #expect(HLSVideoEngine.spatialRenderingLayout(rendering: on, codecID: AV_CODEC_ID_DTS, profile: profile, sampleRate: 48_000) == .l714)
+            #expect(HLSVideoEngine.objectAudioSource(codecID: AV_CODEC_ID_DTS, profile: profile) == .dtsHDMasterAudio)
+        }
+        for profile in [AV_PROFILE_DTS, AV_PROFILE_DTS_ES, AV_PROFILE_DTS_HD_HRA, AV_PROFILE_DTS_EXPRESS] {
+            #expect(HLSVideoEngine.spatialRenderingLayout(rendering: on, codecID: AV_CODEC_ID_DTS, profile: profile, sampleRate: 48_000) == nil)
+        }
+        #expect(HLSVideoEngine.spatialRenderingLayout(rendering: on, codecID: AV_CODEC_ID_DTS, profile: AV_PROFILE_DTS_HD_MA_X, sampleRate: 96_000) == nil)
+        #expect(HLSVideoEngine.spatialRenderingLayout(rendering: .off, codecID: AV_CODEC_ID_DTS, profile: AV_PROFILE_DTS_HD_MA_X, sampleRate: 48_000) == nil)
+        #expect(HLSVideoEngine.objectAudioSource(codecID: AV_CODEC_ID_TRUEHD, profile: 30) == .trueHDAtmos)
+    }
+
     @Test("the first packet sits at the source position of the first decodable frame, and steps by 1024")
     func anchorsOnSource() throws {
         guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return }

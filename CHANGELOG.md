@@ -10,6 +10,29 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Added
+
+- **DTS:X keeps its heights too.** Apple TV cannot bitstream DTS-HD either, so the bridge decoded a
+  DTS:X track's compatible 7.1, where the encoder had folded its four heights (and any objects) into
+  the floor channels. `LoadOptions.objectAudioRendering = .apac(layout)` now sends DTS-HD Master Audio
+  through the new [LibDTSX](https://github.com/kristofferR/LibDTSX) dependency (the `dca` crate behind
+  a C API, packaged like LibTrueHD), which removes those folds and returns the bed, the fixed heights
+  and the objects of the alternate presentations with their positions in LibTrueHD's room
+  coordinates; the same renderer, limiter and APAC encoder then deliver it. FFmpeg names only two of
+  DTS:X's markers and labels some DTS:X plain "DTS-HD MA", so every 48 kHz DTS-HD MA track is offered:
+  LibDTSX decides on the track's first three frames, which the engine reads through the demuxer's
+  peek before the producer starts, so a refusal costs no I/O and keeps `audioBridgeMode` (*Arrival*,
+  plain DTS-HD MA, was refused on its first frame). Rendered into 7.1.4, *8 Mile*, *The Bourne
+  Identity* and the DTS:X Object Emulator demo (bed plus four heights) put every channel on its own
+  speaker, bit for bit what SpatialAudioBridge's DTS:X renderer gives. *Independence Day* (FFmpeg:
+  "DTS:X IMAX") carries two static objects in front, and a D4 trailer five moving ones; their
+  sound points where SpatialAudioBridge puts it within 0.4° and 2.3° (90th percentile of 200 ms
+  windows), the floor channels identical but for rounding and the ceiling within 0.2 points of its
+  share, since the engine's top speakers sit at the room's corners. The first two DTS-HD frames after a start or seek only rebuild the decoder's
+  history (21 ms): entered mid-stream, the first frame otherwise decodes distorted. With the option
+  on, the automatic audio pick also prefers a track FFmpeg labels DTS:X within its language. The
+  alternate presentations are experimental in `dca` and here.
+
 ### Fixed
 
 - **The surround-downmix warning no longer fires on 5.1 inside a Dolby MAT carrier.** After an APAC
