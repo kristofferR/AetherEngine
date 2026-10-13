@@ -571,8 +571,8 @@ public final class AetherEngine: ObservableObject {
     @Published public internal(set) var sourceDVProfile: Int? = nil
 
     /// The Dolby Vision profile rewrite applied to the served stream, nil when the session serves the source's
-    /// own profile (or no Dolby Vision). `.profile7ToProfile81` on a Profile 7 source played on a display
-    /// presenting Dolby Vision, where `videoFormat` reads `.dolbyVision` and `sourceDVProfile` keeps 7.
+    /// own profile (or no Dolby Vision). `.profile7ToProfile81` on every Profile 7 source not served as its
+    /// base layer, whatever the display; `sourceDVProfile` keeps 7.
     @Published public internal(set) var dolbyVisionConversion: DolbyVisionConversion? = nil
 
     /// A HDR10+ (ST 2094-40) T.35 payload was seen in this session's video, whatever the source's format.

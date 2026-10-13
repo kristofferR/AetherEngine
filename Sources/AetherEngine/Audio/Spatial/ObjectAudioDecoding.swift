@@ -31,6 +31,10 @@ protocol ObjectAudioDecoding: AnyObject {
     func nextBlock() throws -> ObjectAudioDecodedBlock?
     /// Drop all state; decoding resumes at the next major sync.
     func reset()
+    /// Blocks the decoder still holds back come out of the next `nextBlock` calls as they are, and it
+    /// holds nothing more until the next reset. The bridge asks at end of input and before a segment
+    /// cut, where that audio belongs.
+    func releaseHeldBlocks()
     /// How often the decoder has reset ITSELF after an internal failure. Its input offsets count from
     /// zero again afterwards, so the caller has to re-anchor its timeline.
     var selfResetCount: Int { get }
@@ -38,4 +42,5 @@ protocol ObjectAudioDecoding: AnyObject {
 
 extension ObjectAudioDecoding {
     var selfResetCount: Int { 0 }
+    func releaseHeldBlocks() {}
 }

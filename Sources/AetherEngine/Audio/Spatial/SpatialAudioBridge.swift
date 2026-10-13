@@ -256,6 +256,9 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
         opLock.lock()
         defer { opLock.unlock() }
         var results: [UnsafeMutablePointer<AVPacket>] = []
+        // Audio the decoder holds for metadata sits before the cut; released here, the cut sees what
+        // it saw before the hold existed, rather than up to 100 ms of it landing in the next segment.
+        renderHeldBlocks(into: &results)
         let settled = pipeline.settle()
         wrap(settled.packets, into: &results)
         noteEncodeErrors(settled.errors)
@@ -268,6 +271,8 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
         guard !drainedAtEOF else { return [] }
         drainedAtEOF = true
         var results: [UnsafeMutablePointer<AVPacket>] = []
+        // Audio the decoder held back for metadata that never came plays as it is.
+        renderHeldBlocks(into: &results)
         encodePending()
         logLevels(levelMeter.restart())
         let finished = pipeline.finish()
@@ -321,6 +326,19 @@ final class SpatialAudioBridge: AudioTranscodingBridge, @unchecked Sendable {
     }
 
     // MARK: - Pipeline
+
+    /// Caller holds `opLock`.
+    private func renderHeldBlocks(into results: inout [UnsafeMutablePointer<AVPacket>]) {
+        decoder.releaseHeldBlocks()
+        do {
+            while let block = try decoder.nextBlock() {
+                stats.framesDecoded += 1
+                try renderAndEncode(block, into: &results)
+            }
+        } catch {
+            EngineLog.emit("[SpatialAudioBridge] drain of held blocks failed: \(error)", category: .session)
+        }
+    }
 
     private func renderAndEncode(_ block: ObjectAudioDecodedBlock, into results: inout [UnsafeMutablePointer<AVPacket>]) throws {
         guard block.sampleRate == Self.sampleRate else { throw BridgeError.unsupportedSampleRate(block.sampleRate) }

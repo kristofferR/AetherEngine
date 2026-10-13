@@ -59,6 +59,13 @@ public enum SpatialSpeakerLayout: String, Sendable, CaseIterable, Codable {
 /// listener. That is the model Atmos object metadata is authored in, so an object on the left wall
 /// halfway back lands between the left-side speakers whatever the physical angles are.
 /// `x` runs left (0) to right (1), `y` front (0) to back (1), `z` floor/ear level (0) to ceiling (1).
+///
+/// Ceiling speakers sit at the panner targets ETSI TS 103 448 gives them (table A.5): a quarter of
+/// the room in from each wall, not in its corners. An object on the ceiling between them is panned
+/// between them, and one beyond them, out at a wall or a corner, plays from the nearest. With the
+/// tops in the corners, an object a third of the way back put 25% of its power in the rear tops
+/// instead of 7%, so overhead content measured up to 4 points of energy higher and 3° higher
+/// against Apple's own Atmos render.
 public enum SpatialSpeaker: String, Sendable, CaseIterable {
     case left, right, center, lfe
     /// 5.1-style surrounds, which a 5.1 bed places in the rear corners.
@@ -85,12 +92,12 @@ public enum SpatialSpeaker: String, Sendable, CaseIterable {
         case .rearRight:      return SIMD3(1, 1, 0)
         case .wideLeft:       return SIMD3(0, 0.25, 0)
         case .wideRight:      return SIMD3(1, 0.25, 0)
-        case .topFrontLeft:   return SIMD3(0, 0, 1)
-        case .topFrontRight:  return SIMD3(1, 0, 1)
-        case .topMiddleLeft:  return SIMD3(0, 0.5, 1)
-        case .topMiddleRight: return SIMD3(1, 0.5, 1)
-        case .topRearLeft:    return SIMD3(0, 1, 1)
-        case .topRearRight:   return SIMD3(1, 1, 1)
+        case .topFrontLeft:   return SIMD3(0.25, 0.25, 1)
+        case .topFrontRight:  return SIMD3(0.75, 0.25, 1)
+        case .topMiddleLeft:  return SIMD3(0.25, 0.5, 1)
+        case .topMiddleRight: return SIMD3(0.75, 0.5, 1)
+        case .topRearLeft:    return SIMD3(0.25, 0.75, 1)
+        case .topRearRight:   return SIMD3(0.75, 0.75, 1)
         }
     }
 

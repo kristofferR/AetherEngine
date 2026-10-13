@@ -425,8 +425,8 @@ public struct LoadOptions: Sendable, Equatable {
     /// the profile field means, and a tvOS build that reads the base layer's colorimetry from the profile
     /// rather than the RPU would render IPT out of YCbCr (the green/violet cast of AE#4 and AE#176).
     ///
-    /// Ignored when the display does support Dolby Vision, and applies to HEVC Profile 8.1 only. Reported by
-    /// DrHurt against a Samsung HDR10 panel.
+    /// Ignored when the display does support Dolby Vision, and applies to HEVC Profile 8.1 and to Profile 7,
+    /// which is served as the Profile 8.1 it is converted to. Reported by DrHurt against a Samsung HDR10 panel.
     public var forceDolbyVisionOnNonDVDisplay: Bool
 
     /// A `DolbyVisionHandling`. Default `.automatic`. `.baseLayerOnly` presents the HDR10 / HLG base layer
@@ -1037,8 +1037,9 @@ public enum VideoFormat: Sendable, Equatable {
 
 /// A Dolby Vision profile rewrite the engine applies to the served stream (`AetherEngine.dolbyVisionConversion`).
 public enum DolbyVisionConversion: Sendable, Equatable {
-    /// Dual-layer Profile 7 rewritten per packet to single-layer Profile 8.1 for a display presenting Dolby
-    /// Vision. The enhancement layer is discarded: a MEL carries next to nothing, a FEL loses its refinement.
+    /// Dual-layer Profile 7 rewritten per packet to single-layer Profile 8.1, on every display (a display
+    /// without Dolby Vision gets the RPU-driven tone map a Profile 8.1 gets). The enhancement layer is
+    /// discarded: a MEL carries next to nothing, a FEL loses its refinement.
     case profile7ToProfile81
 }
 

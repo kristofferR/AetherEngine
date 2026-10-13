@@ -291,6 +291,48 @@ struct SpatialAudioBridgeTests {
         #expect(a.map(\.data) == b.map(\.data))
     }
 
+    /// Like `ClickDecoder`, but returns nothing after a reset until the bridge asks for what it
+    /// holds, as the TrueHD decoder does while it waits for the first object metadata.
+    final class HoldingDecoder: ObjectAudioDecoding {
+        private let inner = ClickDecoder(clickFrame: 30_000)
+        private var holding = true
+        private(set) var releases = 0
+
+        func push(_ bytes: UnsafeRawBufferPointer) throws { try inner.push(bytes) }
+        func nextBlock() throws -> ObjectAudioDecodedBlock? { holding ? nil : try inner.nextBlock() }
+        func reset() { inner.reset(); holding = true }
+        func releaseHeldBlocks() { releases += 1; holding = false }
+    }
+
+    /// A cut settles the bridge, and what the decoder holds plays before that cut, so the hold moves
+    /// no audio into the next segment.
+    @Test("a cut releases what the decoder holds, so it splits as a decoder without a hold does")
+    func settleReleasesHeldBlocks() throws {
+        guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return }
+        let holding = HoldingDecoder()
+        let held = try SpatialAudioBridge(
+            srcTimeBase: AVRational(num: 1, den: 1000), layout: .l714, decoder: holding)
+        let plain = try SpatialAudioBridge(
+            srcTimeBase: AVRational(num: 1, den: 1000), layout: .l714, decoder: ClickDecoder(clickFrame: 30_000))
+        defer { held.close(); plain.close() }
+        func take(_ packets: [UnsafeMutablePointer<AVPacket>]) -> [(pts: Int64, data: Data)] {
+            packets.map { fp in
+                defer { var p: UnsafeMutablePointer<AVPacket>? = fp; trackedPacketFree(&p) }
+                return (fp.pointee.pts, Data(bytes: fp.pointee.data, count: Int(fp.pointee.size)))
+            }
+        }
+        var a = try feed(held, startMs: 0, count: 25).map(\.pts)
+        var b = try feed(plain, startMs: 0, count: 25).map(\.pts)
+        a += take(held.settle()).map(\.pts)
+        b += take(plain.settle()).map(\.pts)
+        #expect(!b.isEmpty)
+        #expect(a == b, "after the cut both carry the same packets")
+        #expect(holding.releases == 1)
+        a += try feed(held, startMs: 500, count: 25).map(\.pts) + take(held.flush()).map(\.pts)
+        b += try feed(plain, startMs: 500, count: 25).map(\.pts) + take(plain.flush()).map(\.pts)
+        #expect(a == b)
+    }
+
     @Test("a producer restart re-anchors on the new position")
     func restartReanchors() throws {
         guard #available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *) else { return }
