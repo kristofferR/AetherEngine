@@ -1,0 +1,56 @@
+name: Fork validation
+
+# Fork-only. Runs on validation/** branches, which carry this file on top of a feature branch, so the
+# fork's main stays identical to upstream. Builds the object-audio components, runs their tests, and
+# publishes aetherctl for measuring renders against local media.
+on:
+  push:
+    branches: ['validation/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  object-audio:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      TRAITS: TrueHDObjectAudio,DTSXObjectAudio
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: swift build (object-audio traits)
+        run: swift build --traits "$TRAITS" --build-tests
+
+      - name: swift test (object audio)
+        run: |
+          swift test --traits "$TRAITS" --skip-build \
+            --filter 'DTSX|TrueHD|BedSplitter|BedLevelMeter|SpatialAudioBridge|SpatialObjectRendering|ObjectMetadataHold|OptionalComponent|PeakLimiter'
+
+      - name: Build aetherctl
+        run: swift build -c release --product aetherctl --traits "$TRAITS"
+
+      - name: Package aetherctl
+        run: |
+          bin="$(swift build -c release --product aetherctl --traits "$TRAITS" --show-bin-path)"
+          out="$RUNNER_TEMP/aetherctl"
+          mkdir -p "$out"
+          cp "$bin/aetherctl" "$out/"
+          find "$bin" -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' -o -name '*.bundle' \) -exec cp -R {} "$out/" \;
+          ditto -c -k --keepParent "$out" "$RUNNER_TEMP/aetherctl-macos.zip"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aetherctl-macos
+          path: ${{ runner.temp }}/aetherctl-macos.zip
+          retention-days: 7
