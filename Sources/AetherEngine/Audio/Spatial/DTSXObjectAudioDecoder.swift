@@ -9,8 +9,9 @@ import AetherLibavutil
 /// heights in a regular XLL channel set at the end of every frame, and the encoder folds each of them at
 /// -3 dB into the bed speaker under it. FFmpegBuild's `x_heights` option (a local patch, #798) decodes
 /// that channel set, outputs 7.1.4 and removes the fold from the bed. The alternate presentations, which
-/// carry objects, keep their plain 7.1 and are refused here. What is left is naming the twelve channels,
-/// each of which plays on its own speaker of a 7.1.4 or 9.1.6 layout.
+/// carry objects, keep their plain 7.1: one FFmpeg labels DTS:X plays that lossless 7.1 on the bed
+/// speakers with the heights silent (`Verdict.bed`), and one it does not label is refused. What is left
+/// is naming the channels, each of which plays on its own speaker of a 7.1.4 or 9.1.6 layout.
 final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
 
     struct DecoderError: Error, CustomStringConvertible {
@@ -22,6 +23,10 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
     enum Verdict: Equatable {
         /// DTS:X the decoder renders, named by its layout ("7.1.4").
         case renders(String)
+        /// DTS:X whose heights the decoder does not read (an alternate presentation, which carries
+        /// objects): its lossless 7.1 plays on the bed speakers and the heights stay silent. The message
+        /// says which presentation.
+        case bed(String)
         /// Not DTS:X, or DTS:X in a presentation this decoder does not render; the message says which.
         case refused(String)
     }
@@ -37,6 +42,9 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
         (AV_CHAN_TOP_BACK_LEFT, .bed(.topRearLeft)), (AV_CHAN_TOP_BACK_RIGHT, .bed(.topRearRight)),
     ]
     static let roles = channels.map(\.1)
+    /// The 7.1 bed at the head of `channels`, all a `Verdict.bed` stream plays.
+    static let bedChannelCount = 8
+    static let bedRoles = Array(roles.prefix(bedChannelCount))
 
     /// Frames decoded after a reset only to rebuild the core's filter history, which the lossless
     /// residual is coded against. Entered mid-stream, the first frame reconstructs as distorted audio
@@ -67,6 +75,8 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
     /// Samples in the last frame that decoded, for one that did not.
     private var nominalFrames = 512
     private var framesWithoutHeights = 0
+    /// Set by a `Verdict.bed`: blocks carry the 7.1 bed only, so nothing reports four silent heights.
+    private(set) var bedChannelsOnly = false
 
     init() throws {
         guard let codec = avcodec_find_decoder(AV_CODEC_ID_DTS),
@@ -127,7 +137,14 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
                     verdict = .renders("7.1.4")
                 } else {
                     framesWithoutHeights += 1
-                    if framesWithoutHeights >= Self.verdictFrames { verdict = .refused(presentationText) }
+                    guard framesWithoutHeights >= Self.verdictFrames else { return }
+                    var layout = frame.pointee.ch_layout
+                    let channels = (0..<UInt32(max(layout.nb_channels, 0))).map {
+                        av_channel_layout_channel_from_index(&layout, $0)
+                    }
+                    verdict = Self.verdictWithoutHeights(
+                        profile: context.pointee.profile, channels: channels, reason: presentationText)
+                    if case .bed = verdict { bedChannelsOnly = true }
                 }
             }
         } catch {
@@ -146,8 +163,9 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
         guard !pending.isEmpty else { return nil }
         let block = pending.removeFirst()
         lent = block.samples
+        let roles = bedChannelsOnly ? Self.bedRoles : Self.roles
         planes.removeAll(keepingCapacity: true)
-        for c in 0..<Self.channels.count {
+        for c in 0..<roles.count {
             planes.append(UnsafePointer(block.samples + c * block.frameCount))
         }
         // Every channel plays on its speaker at unity. The renderer holds a channel at zero until its
@@ -155,7 +173,7 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
         var updates: [ObjectAudioMetadataUpdate] = []
         if block.isDiscontinuity {
             updates.append(ObjectAudioMetadataUpdate(
-                frameOffset: 0, rampFrames: 0, states: Self.roles.map(Self.state(for:))))
+                frameOffset: 0, rampFrames: 0, states: roles.map(Self.state(for:))))
         }
         return ObjectAudioDecodedBlock(
             sampleRate: ObjectAudioRendering.sampleRate,
@@ -163,7 +181,7 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
             inputFrameOffset: block.inputFrameOffset,
             configurationGeneration: 1,
             isDiscontinuity: block.isDiscontinuity,
-            roles: Self.roles,
+            roles: roles,
             planes: planes,
             updates: updates)
     }
@@ -280,6 +298,18 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
         discontinuity = false
     }
 
+    /// The verdict on a stream whose frames came out without heights. One FFmpeg labels DTS:X is in a
+    /// presentation whose heights this decoder does not read, and its 7.1 plays on the bed speakers
+    /// when every decoded channel has one there; anything else is not DTS:X this decoder carries.
+    static func verdictWithoutHeights(profile: Int32, channels: [AVChannel], reason: String) -> Verdict {
+        let labelled = profile == AV_PROFILE_DTS_HD_MA_X || profile == AV_PROFILE_DTS_HD_MA_X_IMAX
+        let bed = Set(Self.channels.prefix(bedChannelCount).map(\.0.rawValue))
+        guard labelled, !channels.isEmpty, channels.allSatisfy({ bed.contains($0.rawValue) }) else {
+            return .refused(reason)
+        }
+        return .bed(reason)
+    }
+
     private func carries(_ channel: AVChannel) -> Bool {
         var layout = frame.pointee.ch_layout
         return av_channel_layout_index_from_channel(&layout, channel) >= 0
@@ -289,7 +319,7 @@ final class DTSXObjectAudioDecoder: ObjectAudioDecoding {
     private var presentationText: String {
         switch context.pointee.profile {
         case AV_PROFILE_DTS_HD_MA_X_IMAX:
-            return "DTS:X in a presentation with objects, which plays as its 7.1 bed"
+            return "DTS:X in a presentation with objects (IMAX)"
         case AV_PROFILE_DTS_HD_MA_X:
             return "DTS:X whose heights did not decode"
         default:

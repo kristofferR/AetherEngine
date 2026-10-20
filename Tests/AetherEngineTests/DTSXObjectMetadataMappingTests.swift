@@ -2,6 +2,7 @@
 #if DTSXObjectAudio
 import Testing
 import Foundation
+import AetherLibavcodec
 import AetherLibavutil
 @testable import AetherEngine
 
@@ -41,6 +42,25 @@ struct DTSXObjectMetadataMappingTests {
         #expect(state.position == SpatialSpeaker.topFrontLeft.position)
         #expect(state.gain == 1)
         #expect(DTSXObjectAudioDecoder.state(for: .lfe).gain == 1)
+    }
+
+    @Test("a presentation FFmpeg labels DTS:X without readable heights plays its 7.1; others are refused")
+    func verdictWithoutHeights() {
+        let bed = DTSXObjectAudioDecoder.channels.prefix(DTSXObjectAudioDecoder.bedChannelCount).map(\.0)
+        let verdict = DTSXObjectAudioDecoder.verdictWithoutHeights
+        #expect(verdict(AV_PROFILE_DTS_HD_MA_X_IMAX, bed, "imax") == .bed("imax"))
+        #expect(verdict(AV_PROFILE_DTS_HD_MA_X, bed, "x") == .bed("x"))
+        #expect(verdict(AV_PROFILE_DTS_HD_MA, bed, "plain") == .refused("plain"))
+        #expect(verdict(AV_PROFILE_DTS_HD_MA_X_IMAX, bed + [AV_CHAN_WIDE_LEFT], "wide") == .refused("wide"))
+        #expect(verdict(AV_PROFILE_DTS_HD_MA_X_IMAX, [], "empty") == .refused("empty"))
+    }
+
+    @Test("the bed a 7.1-only DTS:X stream plays is the 7.1 at the head of the channels, no height in it")
+    func bedRoles() {
+        #expect(DTSXObjectAudioDecoder.bedRoles == [
+            .bed(.center), .bed(.left), .bed(.right), .bed(.sideLeft), .bed(.sideRight), .lfe,
+            .bed(.rearLeft), .bed(.rearRight),
+        ])
     }
 
     @Test("the decoder opens, takes input and asks for more")

@@ -10,7 +10,8 @@ import AetherLibavutil
 /// not in the repository, so each test runs only when its variable names a `.dts` file:
 /// `AE_DTSX_SAMPLE` the "DTS:X Object Emulator" demo (standard 7.1.4, 95 s),
 /// `AE_DTSX_ALTERNATE_SAMPLE` Trinnov's "Experience" trailer (7.1.4 plus five moving objects, 44 s,
-/// refused),
+/// refused), `AE_DTSX_IMAX_SAMPLE` a stream FFmpeg labels "DTS-HD MA + DTS:X IMAX" (7.1.4 plus two
+/// objects, played as its 7.1 bed; any excerpt of such a title),
 /// `AE_DTS_HD_MA_SAMPLE` a DTS-HD Master Audio stream without DTS:X (FFmpeg's FATE
 /// `dts/master_audio_7.1_24bit.dts`). LibDTSX's README (the decoder these replaced) says where to
 /// get them.
@@ -60,6 +61,14 @@ struct DTSXSampleTests {
                 return
             }
         }
+        if let data = Self.sample("AE_DTSX_IMAX_SAMPLE") {
+            let verdict = try Self.verdict(data.prefix(1 << 20))
+            guard case .bed(let reason) = verdict else {
+                Issue.record("the IMAX presentation did not play as its bed: \(String(describing: verdict))")
+                return
+            }
+            #expect(reason.contains("objects"), "\(reason)")
+        }
         if let data = Self.sample("AE_DTS_HD_MA_SAMPLE") {
             let verdict = try Self.verdict(data.prefix(1 << 20))
             guard case .refused(let reason) = verdict else {
@@ -68,6 +77,41 @@ struct DTSXSampleTests {
             }
             #expect(reason.contains("no DTS:X extension"), "\(reason)")
         }
+    }
+
+    @Test("a presentation whose heights are not read plays its 7.1 on the bed speakers")
+    func bedOnlyPresentation() throws {
+        guard let data = Self.sample("AE_DTSX_IMAX_SAMPLE") else { return }
+        let decoder = try DTSXObjectAudioDecoder()
+        let head = data.prefix(1 << 20)
+        var verdict: DTSXObjectAudioDecoder.Verdict?
+        head.withUnsafeBytes { raw in
+            var offset = 0
+            while verdict == nil, offset < raw.count {
+                let n = min(4096, raw.count - offset)
+                verdict = decoder.verdict(feeding: UnsafeRawBufferPointer(rebasing: raw[offset..<offset + n]))
+                offset += n
+            }
+        }
+        guard case .bed = verdict else {
+            Issue.record("no bed verdict: \(String(describing: verdict))")
+            return
+        }
+        decoder.reset()
+        var blocks = 0
+        var energy = [Double](repeating: 0, count: DTSXObjectAudioDecoder.bedChannelCount)
+        try head.withUnsafeBytes { try decoder.push($0) }
+        while let block = try decoder.nextBlock() {
+            #expect(block.roles == DTSXObjectAudioDecoder.bedRoles)
+            #expect(block.planes.count == DTSXObjectAudioDecoder.bedChannelCount)
+            for (c, plane) in block.planes.enumerated() {
+                for i in 0..<block.frameCount { energy[c] += Double(plane[i] * plane[i]) }
+            }
+            blocks += 1
+        }
+        #expect(blocks > 0)
+        // Front left and right carry the soundtrack.
+        #expect(energy[1] > 0 && energy[2] > 0)
     }
 
     @Test("the standard presentation plays each channel on its own speaker, the heights overhead")

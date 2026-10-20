@@ -10,6 +10,18 @@ the public-API contract.
 
 ## [Unreleased]
 
+### Changed
+
+- **A DTS:X track in a presentation with objects keeps its lossless 7.1 instead of dropping to 5.1
+  E-AC-3.** With `objectAudioRendering` on, a track FFmpeg labels DTS:X whose heights the decoder does
+  not read (the alternate presentations, such as IMAX Enhanced, `DTS-HD MA + DTS:X IMAX`) was refused
+  and went to the channel bridge, which under the default `.surroundCompat` re-encodes it as 5.1
+  E-AC-3 at 768 kbit/s, its rear surrounds folded into the sides. The decoder now plays that 7.1 on
+  the bed speakers, as APAC with silent heights on the same route a rendered DTS:X track takes
+  (`DTSXObjectAudioDecoder.Verdict.bed`), and hands out the eight bed channels only, so telemetry
+  and the `bed levels` line show no heights. A host on `.lossless` keeps its FLAC 7.1 for such a
+  track, and a stream FFmpeg does not label DTS:X is refused as before.
+
 ### Fixed
 
 - **A live HLS channel on the software path no longer stalls once per segment (#813).** The software

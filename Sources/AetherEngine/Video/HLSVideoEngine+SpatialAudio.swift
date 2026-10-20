@@ -288,6 +288,8 @@ extension HLSVideoEngine {
         source: ObjectAudioSource
     ) -> HLSSegmentProducer? {
         let bridge: SpatialAudioBridge
+        // DTS:X whose heights the decoder does not read, carried as its 7.1 bed (`Verdict.bed`).
+        var dtsxBedOnly = false
         do {
             let decoder: ObjectAudioDecoding
             switch source {
@@ -320,7 +322,20 @@ extension HLSVideoEngine {
                     dtsx.reset()
                     decoder = dtsx
                     audioIsConfirmedDTSX = true
-                case .refused(let reason):
+                case .bed(let reason) where audioBridgeMode == .surroundCompat:
+                    // The channel bridge would carry this lossless 7.1 as lossy 5.1 E-AC-3; APAC keeps
+                    // all eight channels on the route a rendered DTS:X track takes.
+                    EngineLog.emit(
+                        "[HLSVideoEngine] DTS-HD MA track is \(reason); its 7.1 plays on the bed speakers as "
+                        + "APAC with silent heights, not through the 5.1 E-AC-3 channel bridge "
+                        + "(\(String(format: "%.0f", ms)) ms)",
+                        category: .session
+                    )
+                    dtsx.reset()
+                    decoder = dtsx
+                    audioIsConfirmedDTSX = true
+                    dtsxBedOnly = true
+                case .bed(let reason), .refused(let reason):
                     EngineLog.emit(
                         "[HLSVideoEngine] DTS-HD MA track is not DTS:X this engine renders (\(reason)); "
                         + "keeping the channel bridge",
@@ -376,7 +391,7 @@ extension HLSVideoEngine {
             // Short on purpose: hosts append it to a track title in one-line stats rows.
             audioPipelineDescription = source == .trueHDAtmos
                 ? "\(sourceCodecLabel) Atmos → APAC \(layout.rawValue)"
-                : "DTS:X → APAC \(layout.rawValue)"
+                : dtsxBedOnly ? "DTS:X 7.1 → APAC \(layout.rawValue)" : "DTS:X → APAC \(layout.rawValue)"
             audioDelivery = .bridged
             audioIsAPAC = true
             let rendering: String
@@ -385,6 +400,8 @@ extension HLSVideoEngine {
                 rendering = "objects rendered into \(layout.rawValue) (reference render, \(TrueHDReferenceRender.variable))"
             case .trueHDAtmos:
                 rendering = "channel presentation split into \(layout.rawValue) by the objects' energy"
+            case .dtsHDMasterAudio where dtsxBedOnly:
+                rendering = "7.1 bed routed one to one into \(layout.rawValue), heights silent"
             case .dtsHDMasterAudio:
                 rendering = "bed and heights routed one to one into \(layout.rawValue)"
             }
